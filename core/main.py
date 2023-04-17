@@ -3,13 +3,30 @@ import numpy as np
 from scipy.cluster.hierarchy import single, fcluster
 from scipy.spatial.distance import pdist
 
-pyximport.install(setup_args={"include_dirs": np.get_include()}, reload_support=True)
+pyximport.install(setup_args={
+    "include_dirs": np.get_include(),
+    'options': {
+        'build_ext': {
+            'cython_directives': {
+                'language_level': 3,
+                'boundscheck':False,
+                'wraparound':False,
+                'initializedcheck':False,
+                'nonecheck':False,
+                'overflowcheck':False,
+                'cdivision':True,
+                'optimize.use_switch': True,
+                'profile': True,
+            }
+        }
+    }
+}, reload_support=True)
 from core.build.force import force, init, calc_cluster_score
 import matplotlib.pyplot as plt
 import pandas as pd
 import plotly.express as px
 from core.preprocessing.read import *
-
+import timeit
 
 #with open('4_cluster_revised.txt') as data_file:
 #    data = data_file.read()
@@ -36,15 +53,17 @@ print(timeit.repeat(lambda: force(similarities=sims,
                                   iterations=50),
                     number=10))
 """
-data = read('4_cluster_revised.txt')
+data, n = read('4_cluster_revised.txt')
 sims = normalize_triangle(data)
 
 
 
-res = np.asarray(force(similarities=sims,
+res = force(similarities=sims,
                        dims=3,
                        temp=100,
-                       iterations=20))
+                       iterations=100,
+                       n=n)
+
 #res = init(sims, 3)
 single(pdist(res))
 
@@ -52,10 +71,11 @@ scores = []
 best_clustering = []
 best_score = np.finfo('d').max
 z = single(pdist(res))
-for t in z[::-1,2]:
+
+for t in z[::-1,2][range(0,n,n//20)]:
     print(t)
     clustering = fcluster(z,t,criterion="distance")
-    score = calc_cluster_score(clustering, sims)
+    score = calc_cluster_score(clustering, sims, n)
     scores.append(score)
     if score < best_score:
         best_score = score

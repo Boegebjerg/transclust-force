@@ -1,4 +1,4 @@
-#cython: language_level=3, profile=True
+#cython: language_level=3, profile=True, boundscheck=False, wraparound=False, initializedcheck=False, nonecheck=False, overflowcheck=False, cdivision=True
 
 import numpy as np
 cimport numpy as np
@@ -7,12 +7,13 @@ import cython
 import pandas as pd
 import plotly.express as px
 from cpython.mem cimport PyMem_Malloc, PyMem_Free
-from libc.math cimport sqrt
+from libc.math cimport sqrt, log2
 from libc.string cimport memset
+from cython.parallel import prange
 
 
-cdef inline np.npy_int64 condensed_index(np.npy_int64 n, np.npy_int64 i,
-                                         np.npy_int64 j):
+cdef inline int condensed_index(int n, int i,
+                                         int j) nogil:
     """
     Calculate the condensed index of element (i, j) in an n x n condensed
     matrix.
@@ -55,9 +56,9 @@ cdef inline double _calc_temperature(int i, int n, double temp):
 
 
 cdef double euclidean_distance(double[:, ::1] X,
-                               np.intp_t i1, np.intp_t i2):
+                               int i1, int i2) nogil:
     cdef double tmp, d
-    cdef np.intp_t j
+    cdef int j
 
     d = 0
 
@@ -68,22 +69,23 @@ cdef double euclidean_distance(double[:, ::1] X,
     return sqrt(d)
 
 
-cdef inline double[:,::1] _calc_displacements(double[:,::1] similarities,
+cdef inline double[:,::1] _calc_displacements(double[:] similarities,
                               double[:,::1] positions,
                               double attraction,
                               double repulsion,
                               int n,
                               int dims):
     cdef double distance, force, displacement
-    cdef int i, j, dim
+    cdef int i, j, dim, cidx
     cdef double[:,::1] displacements = np.zeros((n, dims))
-    for i in range(n):
+    for i in prange(n, nogil=True):
         for j in range(i+1,n):
             distance = euclidean_distance(positions, i, j)
             #print(f"Sim {i},{j}: {similarities[i,j]}")
-            if similarities[i,j] > 0:
+            cidx = condensed_index(n,i,j)
+            if similarities[cidx] > 0:
                 force = (
-                    np.log2(distance+1) * similarities[i,j] * attraction
+                    log2(distance+1) * similarities[cidx] * attraction
                 ) / distance
                 #if i == 0:
                 #    print(f"Attract: {force}")
@@ -96,8 +98,8 @@ cdef inline double[:,::1] _calc_displacements(double[:,::1] similarities,
             else:
                 force = (
                     (
-                        similarities[i,j] * repulsion
-                    ) / np.log2(distance+1)
+                        similarities[cidx] * repulsion
+                    ) / log2(distance+1)
                 ) / distance
                 #print(f"Repulse: {force}")
 
@@ -112,14 +114,14 @@ cdef inline double[:,::1] _calc_displacements(double[:,::1] similarities,
 
 
 
-cdef double _calc_cluster_score(int[:] clusters, double[:,::1] sims):
+cdef double _calc_cluster_score(int[:] clusters, double[:] sims, int n):
     cdef double score = 0
     cdef double cost
     cdef int i,j
     cdef int length = len(clusters)
     for i in range(length):
         for j in range(length):
-            cost = sims[i,j]
+            cost = sims[condensed_index(n,i,j)]
             if clusters[i] != clusters[j]:
                 if cost > 0:
                     score += cost
@@ -128,7 +130,7 @@ cdef double _calc_cluster_score(int[:] clusters, double[:,::1] sims):
     return score
 
 
-cdef double[:,::1] _force(double[:,::1] similarities, int n, int dims, double temp, int iterations):
+cdef double[:,::1] _force(double[:] similarities, int n, int dims, double temp, int iterations):
     cdef double attraction = 100.0 / n, repulsion = 100.0 / n
     cdef double[:,::1] positions = _initialize(dims,n)
     cdef double[:,::1] displacements
@@ -173,12 +175,12 @@ cdef double[:,::1] _force(double[:,::1] similarities, int n, int dims, double te
     return np.asarray(positions)
 
 
-def calc_cluster_score(clusters, sims):
-    return _calc_cluster_score(clusters, sims)
+def calc_cluster_score(clusters, sims, n):
+    return _calc_cluster_score(clusters, sims, n)
 
 
 
-def force(similarities, dims, temp, iterations, n=None):
+def force(similarities, dims, temp, iterations, n):
     if not n:
         n = similarities.shape[0]
     positions = _force(similarities,n, dims, temp, iterations)

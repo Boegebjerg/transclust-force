@@ -5,7 +5,8 @@ def read(file):
 
     with open(file) as data_file:
         data = data_file.read()
-    return np.fromstring(data, sep='\t')
+        n = len(data[:data.find('\n')].split('\t'))+1
+    return np.fromstring(data, sep='\t'),n
 
 def normalize(data_inc):
     data = np.zeros((4000,4000))
